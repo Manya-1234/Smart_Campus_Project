@@ -8,12 +8,11 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // 🔄 Fetch current user on load
   const fetchUser = async () => {
     try {
       const currentUser = await authservice.currentuser();
       setUser(currentUser);
-    } catch (error) {
+    } catch {
       setUser(null);
     } finally {
       setLoading(false);
@@ -24,12 +23,16 @@ export const AuthProvider = ({ children }) => {
     fetchUser();
   }, []);
 
-  // 🔐 LOGIN
   const login = async (email, password) => {
     try {
       await authservice.login({ email, password });
 
       const currentUser = await authservice.currentuser();
+
+      if (!currentUser) {
+        throw new Error("Login failed. Please try again.");
+      }
+
       setUser(currentUser);
 
       return currentUser;
@@ -38,53 +41,88 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // 📝 SIGNUP
   const signup = async (data) => {
     try {
       const {
         name,
-        course = "Btech",
-        department = "NA",
-        year = "1",
-        rollno = "23456",
-        email,
-        password,
-      } = data;
-
-      const userAccount = await authservice.createaccount({
-        email,
-        password,
-        name,
-      });
-
-      await authservice.login({ email, password });
-
-      await dataservice.createprofile({
-        userId: userAccount.$id,
-        name,
-        email,
         course,
         department,
         year,
         rollno,
-      });
+        email,
+        password,
+      } = data;
 
-      const currentUser = await authservice.currentuser();
+      let userAccount;
+
+      try {
+        userAccount = await authservice.createaccount({
+          email,
+          password,
+          name,
+        });
+      } catch (error) {
+        if (
+          error.message?.toLowerCase().includes("already exists") ||
+          error.code === 409
+        ) {
+          throw new Error("Account already exists. Please login.");
+        }
+
+        throw error;
+      }
+
+      if (!userAccount) {
+        throw new Error("Signup failed.");
+      }
+
+      await authservice.login({ email, password });
+
+      let currentUser = null;
+
+      for (let i = 0; i < 5; i++) {
+        currentUser = await authservice.currentuser();
+
+        if (currentUser) break;
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      if (!currentUser) {
+        throw new Error("Signup succeeded but login failed.");
+      }
+
+      try {
+        await dataservice.createprofile({
+          userId: currentUser.$id,
+          name,
+          email,
+          course,
+          department:
+            course === "BTech" || course === "MTech"
+              ? department
+              : "NA",
+          year,
+          rollno,
+        });
+      } catch (profileError) {
+        console.error(profileError);
+      }
+
       setUser(currentUser);
 
-      return userAccount;
+      return currentUser;
     } catch (error) {
       throw error;
     }
   };
 
-  // 🚪 LOGOUT
   const logout = async () => {
     try {
       await authservice.logout();
       setUser(null);
     } catch (error) {
-      console.log("Logout error:", error);
+      console.error(error);
     }
   };
 
